@@ -90,9 +90,9 @@ const COMBINED_MAP = { ...PREFECTURE_MAP, ...CITY_MAP };
 const MAP_REGEX = new RegExp(Object.keys(COMBINED_MAP).join('|'), 'g');
 const HANKAKU_REGEX = /[ｱ-ﾝﾞﾟｰ･]/;
 
+// 半角カタカナ -> 全角カタカナ
 const hankakuToZenkakuKatakana = (str) => {
     if (!str || !HANKAKU_REGEX.test(str)) return str;
-
     const hankaku = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯﾞﾟｰ･';
     const zenkaku = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンァィゥェォャュョッ゛゜ー・';
     let result = '';
@@ -125,54 +125,77 @@ const hankakuToZenkakuKatakana = (str) => {
     return result;
 };
 
+// カタカナ -> ひらがな
+const katakanaToHiragana = (str) => {
+    return str.replace(/[\u30a1-\u30f6]/g, (match) => {
+        const chr = match.charCodeAt(0) - 0x60;
+        return String.fromCharCode(chr);
+    });
+};
+
+// 全角英数 -> 半角
+const zenkakuToHankakuAlphanum = (str) => {
+    return str.replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+};
+
 // --- 型推定ロジック ---
-const detectColumnType = (rows, colIndex) => {
+const detectColumnType = (rows, colIndex, colName = '') => {
     let numericCount = 0;
     let phoneCount = 0;
     let postalCount = 0;
+    let kanaCount = 0;
     let nonEmptyCount = 0;
-    const checkLimit = 200; // チェック行数を増やす
+
+    // ヘッダー名によるヒント (ユーザーの意図を汲む)
+    if (colName.includes('電話') || colName.includes('TEL') || colName.includes('携帯')) return 'phone';
+    if (colName.includes('郵便') || colName.includes('〒') || colName.includes('ZIP')) return 'postal';
+    if (colName.includes('金額') || colName.includes('売上') || colName.includes('価格') || colName.includes('Price') || colName.includes('円')) return 'number';
+    if (colName.includes('フリガナ') || colName.includes('ふりがな') || colName.includes('カナ') || colName.includes('よみ')) return 'furigana';
+    if (colName.includes('名') || colName.includes('Name')) return 'name';
+
+    const checkLimit = 500;
 
     for (let i = 0; i < Math.min(rows.length, checkLimit); i++) {
         const val = String(rows[i][colIndex] || '').trim();
         if (!val) continue;
         nonEmptyCount++;
 
-        // 数値だけ抽出
-        const digitOnly = val.replace(/[^\d]/g, '');
+        const cleanVal = zenkakuToHankakuAlphanum(val);
+        const digitOnly = cleanVal.replace(/[^\d]/g, '');
 
-        // 電話番号っぽい (9桁〜11桁)
-        // 9桁: 03-1234-567 (市外局番抜け等)も許容してみる
+        // カタカナ/ひらがな率が高い
+        if (/[ァ-ンぁ-ん]/.test(val)) {
+            kanaCount++;
+        }
+
+        // 電話番号っぽい
         if (digitOnly.length >= 9 && digitOnly.length <= 11) {
             phoneCount++;
         }
 
-        // 郵便番号っぽい (7桁) または ハイフンありで7桁
-        if (digitOnly.length === 7 || (val.includes('-') && digitOnly.length === 7)) {
+        // 郵便番号っぽい
+        if (digitOnly.length === 7 || (cleanVal.includes('-') && digitOnly.length === 7)) {
             postalCount++;
         }
 
-        // 金額っぽい (数値のみ、またはカンマ含む。円マーク含む)
-        // アルファベットが含まれていても、数字の割合が高ければ金額の可能性あり（ゴミデータ混入）
-        if (/[\d]/.test(val)) {
-            // 簡易判定: 数字を含み、かつ「電話でも郵便でもない」場合
-            if (!val.match(/\d{2,4}-\d{2,4}-\d{4}/) && !val.match(/\d{3}-\d{4}/)) {
-                // 数字の連続性が高い、またはカンマ区切り
-                if (/^[\d,¥￥\.\s]+$/.test(val.replace(/[a-zA-Z]/g, ''))) {
-                    numericCount++;
-                }
+        // 金額っぽい (数値のみ、またはカンマ・円マーク含む)
+        if (/[\d]/.test(cleanVal) && !cleanVal.includes('-') && !cleanVal.match(/\d{2,4}-\d{2,4}-\d{4}/)) {
+            // アルファベットが含まれていない、または通貨記号のみ
+            const noCurrency = cleanVal.replace(/[\\¥￥,.\s]/g, '');
+            if (/^\d+$/.test(noCurrency)) {
+                numericCount++;
             }
         }
     }
 
     if (nonEmptyCount === 0) return 'text';
 
-    // 判定基準 (30%以上マッチしたらその型とみなす - 緩和)
+    if (kanaCount / nonEmptyCount > 0.5) return 'furigana'; // フリガナ列と推定
     if (phoneCount / nonEmptyCount > 0.3) return 'phone';
     if (postalCount / nonEmptyCount > 0.3) return 'postal';
     if (numericCount / nonEmptyCount > 0.3) return 'number';
 
-    return 'text';
+    return 'text'; // デフォルト
 };
 
 
@@ -181,11 +204,11 @@ self.onmessage = (e) => {
     const { rows, columnSettings } = e.data;
 
     try {
-        // 1. 各列の型を自動判定する
+        // 1. 各列の型を自動判定
         const detectedTypes = {};
         columnSettings.forEach(col => {
             if (col.visible) {
-                detectedTypes[col.index] = detectColumnType(rows, col.index);
+                detectedTypes[col.index] = detectColumnType(rows, col.index, col.name);
             }
         });
 
@@ -196,65 +219,95 @@ self.onmessage = (e) => {
                 if (!setting || !setting.visible) return cell;
 
                 let result = String(cell || '');
-                // 共通: カタカナ正規化、全角スペース除去、制御文字削除
-                result = hankakuToZenkakuKatakana(result);
-                result = result.replace(/　/g, ' ');
-                result = result.replace(/[\x00-\x1F\x7F]/g, "");
 
-                // 自動判定されたタイプに基づいて整形
+                // --- 共通前処理 ---
+                // 1. 半角カタカナ -> 全角カタカナ (フリガナ以外でもやっておく)
+                result = hankakuToZenkakuKatakana(result);
+                // 2. 制御文字除去
+                result = result.replace(/[\x00-\x1F\x7F]/g, "");
+                // 3. 全角英数 -> 半角英数 (基本方針)
+                result = zenkakuToHankakuAlphanum(result);
+
                 const type = detectedTypes[originalColIndex] || 'text';
 
+                // --- タイプ別処理 ---
                 if (type === 'number') {
-                    // アルファベット除去、カンマ除去して数値化、再フォーマット
-                    // "abc1000" -> "1000"
+                    // 金額: 不要な文字(アルファベット、#など)を削除
+                    // 数字、ドット、マイナスのみ残す
                     const numStr = result.replace(/[^\d.-]/g, '');
                     if (numStr && !isNaN(numStr)) {
                         result = Number(numStr).toLocaleString();
+                    } else {
+                        result = ''; // 計算不能なゴミは消す
                     }
-                } else if (type === 'postal') {
-                    // 郵便番号: 数字以外除去、xxx-xxxx
-                    let postalNums = result.replace(/[^\d]/g, '');
 
-                    // 7桁
+                } else if (type === 'postal') {
+                    // 郵便番号: 数字以外除去
+                    let postalNums = result.replace(/[^\d]/g, '');
+                    // 7桁なら 3-4 に整形
                     if (postalNums.length === 7) {
                         result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
                     }
-                    // 6桁? "123456" -> "123-456"? いや、6桁は不完全だが、とりあえずハイフン入れる？
-                    // ユーザー指摘: "123456"
-                    else if (postalNums.length === 6) {
-                        // 無理やりハイフンを入れるとすれば 3-3 ?
+                    // ユーザー指摘: "123456" などの不完全データどうするか？ -> 無理やりハイフンを入れるとすれば
+                    else if (postalNums.length >= 6) {
+                        // とりあえずハイフンを入れる
                         result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
                     }
-                    // 5桁以下 はそのまま
-                    else if (postalNums.length > 0) {
+                    else {
                         result = postalNums;
                     }
+
                 } else if (type === 'phone') {
                     // 電話番号
-                    const nums = result.replace(/[^\d]/g, '');
+                    let nums = result.replace(/[^\d]/g, '');
+
+                    // 先頭0落ち対応 (9012345678 -> 09012345678)
+                    // 10桁で、かつ 90, 80, 70, 50, 20 で始まる場合は携帯・PHSとみなして0を付与
+                    // ただし市外局番90-xxxなどの可能性も？ しかしユーザーは0落ちを懸念。
+                    if (nums.length === 10 && ['90', '80', '70', '50', '20'].includes(nums.slice(0, 2))) {
+                        nums = '0' + nums;
+                    }
+
+                    // 9桁の場合 -> 090-123-456 形式かどうかは不明だが、ユーザー例: 901234567 -> 090-1234-567 
+                    // 9桁の携帯番号は存在しないが、0落ちで10桁なら上記でキャッチ。
+                    // 9桁: 901234567 -> 0390123456? 不明。
+                    // ユーザー例: 901234567 -> 0901234567 (10桁)? 
+                    // ユーザー例: 901234567 (9桁) -> 090-1234-567 
+                    if (nums.length === 9 && ['90', '80', '70'].includes(nums.slice(0, 2))) {
+                        nums = '0' + nums; // -> 10桁になる
+                    }
 
                     if (nums.length === 11) {
-                        // 090 1234 5678 -> 090-1234-5678
+                        // 携帯: 090-1234-5678
                         result = `${nums.slice(0, 3)}-${nums.slice(3, 7)}-${nums.slice(7)}`;
                     } else if (nums.length === 10) {
+                        // 固定: 03-1234-5678 or 06-1234-5678 (簡易)
                         if (nums.startsWith('03') || nums.startsWith('06')) {
                             result = `${nums.slice(0, 2)}-${nums.slice(2, 6)}-${nums.slice(6)}`;
                         } else {
+                            // その他: 045-123-4567 等 (3-3-4)
                             result = `${nums.slice(0, 3)}-${nums.slice(3, 6)}-${nums.slice(6)}`;
                         }
-                    } else if (nums.length === 9) {
-                        // "90-1234-567" のようなケース (0落ち?) -> 090-1234-5678 に復元は危険だが、
-                        // とりあえずハイフンで整形するなら 2-3-4 ? あるいはそのまま?
-                        // ユーザーの例: "90-1234-567" allow intact?
-                        // 数字のみにして9桁なら、そのまま返すか、無理やりハイフン？
-                        // いったんそのまま返す（数字のみにはなっている）
-                        result = nums;
-                    } else if (nums.length > 0) {
+                    } else {
+                        // 9桁以下 -> 可能な限りハイフン
                         result = nums;
                     }
+
+                } else if (type === 'furigana') {
+                    // フリガナ: 全てひらがなに統一 + スペース統一
+                    result = katakanaToHiragana(result);
+                    // スペース正規化 (全角スペース -> 半角スペース)
+                    result = result.replace(/　/g, ' ');
+                    // 連続スペース除去
+                    result = result.replace(/\s+/g, ' ').trim();
+
                 } else {
-                    // 通常テキスト
-                    result = result.replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+                    // 通常テキスト (名前、住所など)
+                    // 全角スペース -> 半角スペース
+                    result = result.replace(/　/g, ' ');
+                    // 住所などの番地ハイフン統一 (ー -> -)
+                    result = result.replace(/[ー−]/g, '-');
+                    // 都道府県ビルトイン変換
                     result = result.replace(MAP_REGEX, matched => COMBINED_MAP[matched]);
                 }
 
