@@ -74,7 +74,7 @@ const Toast = ({ message, onUndo, onClose, duration = 4000 }) => {
 
 
 // === DND対応ヘッダーコンポーネント ===
-const SortableHeader = ({ col, activeMenuIndex, setActiveMenuIndex, menuRef, updateColumnType, hideColumn }) => {
+const SortableHeader = ({ col, hideColumn }) => {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: col.index });
 
   const style = {
@@ -96,9 +96,6 @@ const SortableHeader = ({ col, activeMenuIndex, setActiveMenuIndex, menuRef, upd
         {/* ドラッグハンドル兼コンテンツエリア */}
         <div className="p-3 pr-8 cursor-grab active:cursor-grabbing w-full h-full flex flex-col justify-start items-start gap-1">
           <div className="font-bold text-slate-800 text-sm truncate w-full" title={col.name}>{col.name}</div>
-          <div className="text-[10px] text-slate-500 font-mono uppercase bg-slate-200/50 px-1 rounded flex items-center gap-1">
-            {col.type} <ChevronDown className="w-3 h-3 ml-1" />
-          </div>
         </div>
 
         {/* 削除ボタン (常時表示またはホバー) */}
@@ -110,38 +107,7 @@ const SortableHeader = ({ col, activeMenuIndex, setActiveMenuIndex, menuRef, upd
         >
           <X className="w-3 h-3" />
         </button>
-
-        {/* 設定メニューボタン (クリックでメニュー) */}
-        <div
-          className="absolute bottom-1 right-1 p-1 text-slate-400 hover:text-blue-500 cursor-pointer"
-          onClick={(e) => { e.stopPropagation(); setActiveMenuIndex(activeMenuIndex === col.index ? null : col.index); }}
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <GripHorizontal className="w-4 h-4" />
-        </div>
       </div>
-
-      {/* Dropdown Menu */}
-      {activeMenuIndex === col.index && (
-        <div
-          ref={menuRef}
-          className="absolute top-full left-0 mt-1 w-40 bg-white rounded-lg shadow-xl border border-slate-200 z-50 text-slate-700 text-left font-normal"
-          onPointerDown={(e) => e.stopPropagation()}
-        >
-          <div className="p-2 border-b border-slate-100">
-            <div className="text-xs font-semibold text-slate-400 mb-1 px-2">列のタイプ</div>
-            <button onClick={() => updateColumnType(col.index, 'text')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'text' ? 'text-blue-600 font-bold' : ''}`}>Text (標準)</button>
-            <button onClick={() => updateColumnType(col.index, 'number')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'number' ? 'text-blue-600 font-bold' : ''}`}>Number (金額)</button>
-            <button onClick={() => updateColumnType(col.index, 'postal')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'postal' ? 'text-blue-600 font-bold' : ''}`}>Postal (郵便番号)</button>
-            <button onClick={() => updateColumnType(col.index, 'phone')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'phone' ? 'text-blue-600 font-bold' : ''}`}>Phone (電話)</button>
-          </div>
-          <div className="p-2">
-            <button onClick={() => hideColumn(col.index)} className="w-full text-left px-2 py-1.5 rounded text-xs text-red-600 hover:bg-red-50 flex items-center gap-2">
-              <Trash2 className="w-3 h-3" /> 列を削除
-            </button>
-          </div>
-        </div>
-      )}
     </th>
   );
 };
@@ -163,22 +129,9 @@ const CSVFormatter = () => {
   const [splitConfig, setSplitConfig] = useState({ column: '', delimiter: ' ' });
   const [mergeConfig, setMergeConfig] = useState({ columns: [], delimiter: ' ' });
 
-  const [activeMenuIndex, setActiveMenuIndex] = useState(null);
-  const menuRef = useRef(null);
-
   // ステータス・Toast管理
   const [isProcessing, setIsProcessing] = useState(false);
   const [toast, setToast] = useState(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
-        setActiveMenuIndex(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   const saveToHistory = (action) => {
     setHistory(prev => [...prev, {
@@ -313,10 +266,7 @@ const CSVFormatter = () => {
     };
   };
 
-  const updateColumnType = (index, type) => {
-    setColumnSettings(prev => prev.map(c => c.index === index ? { ...c, type } : c));
-    setActiveMenuIndex(null);
-  };
+
 
   const hideColumn = (index) => {
     saveToHistory('列削除');
@@ -619,10 +569,6 @@ const CSVFormatter = () => {
                         <SortableHeader
                           key={col.id}
                           col={col}
-                          activeMenuIndex={activeMenuIndex}
-                          setActiveMenuIndex={setActiveMenuIndex}
-                          menuRef={menuRef}
-                          updateColumnType={updateColumnType}
                           hideColumn={hideColumn}
                         />
                       );
