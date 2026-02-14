@@ -1,102 +1,10 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Upload, Download, AlertCircle, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2, GripVertical, GripHorizontal, Plus, Merge, Search, Loader2, RefreshCcw, Undo2 } from 'lucide-react';
+import { Upload, Download, AlertCircle, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2, GripVertical, GripHorizontal, Plus, Merge, Search, Loader2, RefreshCcw, Undo2, CheckCircle2 } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-// === 定数・マッピング (最適化用) ===
-const PREFECTURE_MAP = {
-  'ﾎｯｶｲﾄﾞｳ': '北海道', 'ホッカイドウ': '北海道', 'ほっかいどう': '北海道',
-  'ｱｵﾓﾘｹﾝ': '青森県', 'アオモリケン': '青森県', 'あおもりけん': '青森県',
-  'ｲﾜﾃｹﾝ': '岩手県', 'イワテケン': '岩手県', 'いわてけん': '岩手県',
-  'ﾐﾔｷﾞｹﾝ': '宮城県', 'ミヤギケン': '宮城県', 'みやぎけん': '宮城県',
-  'ｱｷﾀｹﾝ': '秋田県', 'アキタケン': '秋田県', 'あきたけん': '秋田県',
-  'ﾔﾏｶﾞﾀｹﾝ': '山形県', 'ヤマガタケン': '山形県', 'やまがたけん': '山形県',
-  'ﾌｸｼﾏｹﾝ': '福島県', 'フクシマケン': '福島県', 'ふくしまけん': '福島県',
-  'ｲﾊﾞﾗｷｹﾝ': '茨城県', 'イバラキケン': '茨城県', 'いばらきけん': '茨城県',
-  'ﾄﾁｷﾞｹﾝ': '栃木県', 'トチギケン': '栃木県', 'とちぎけん': '栃木県',
-  'ｸﾞﾝﾏｹﾝ': '群馬県', 'グンマケン': '群馬県', 'ぐんまけん': '群馬県',
-  'ｻｲﾀﾏｹﾝ': '埼玉県', 'サイタマケン': '埼玉県', 'さいたまけん': '埼玉県',
-  'ﾁﾊﾞｹﾝ': '千葉県', 'チバケン': '千葉県', 'ちばけん': '千葉県',
-  'ﾄｳｷｮｳﾄ': '東京都', 'トウキョウト': '東京都', 'とうきょうと': '東京都',
-  'ｶﾅｶﾞﾜｹﾝ': '神奈川県', 'カナガワケン': '神奈川県', 'かながわけん': '神奈川県',
-  'ﾆｲｶﾞﾀｹﾝ': '新潟県', 'ニイガタケン': '新潟県', 'にいがたけん': '新潟県',
-  'ﾄﾔﾏｹﾝ': '富山県', 'トヤマケン': '富山県', 'とやまけん': '富山県',
-  'ｲｼｶﾜｹﾝ': '石川県', 'イシカワケン': '石川県', 'いしかわけん': '石川県',
-  'ﾌｸｲｹﾝ': '福井県', 'フクイケン': '福井県', 'ふくいけん': '福井県',
-  'ﾔﾏﾅｼｹﾝ': '山梨県', 'ヤマナシケン': '山梨県', 'やまなしけん': '山梨県',
-  'ﾅｶﾞﾉｹﾝ': '長野県', 'ナガノケン': '長野県', 'ながのけん': '長野県',
-  'ｷﾞﾌｹﾝ': '岐阜県', 'ギフケン': '岐阜県', 'ぎふけん': '岐阜県',
-  'ｼｽﾞｵｶｹﾝ': '静岡県', 'シズオカケン': '静岡県', 'しずおかけん': '静岡県',
-  'ｱｲﾁｹﾝ': '愛知県', 'アイチケン': '愛知県', 'あいちけん': '愛知県',
-  'ﾐｴｹﾝ': '三重県', 'ミエケン': '三重県', 'みえけん': '三重県',
-  'ｼｶﾞｹﾝ': '滋賀県', 'シガケン': '滋賀県', 'しがけん': '滋賀県',
-  'ｷｮｳﾄﾌ': '京都府', 'キョウトフ': '京都府', 'きょうとふ': '京都府',
-  'ｵｵｻｶﾌ': '大阪府', 'オオサカフ': '大阪府', 'おおさかふ': '大阪府',
-  'ﾋｮｳｺﾞｹﾝ': '兵庫県', 'ヒョウゴケン': '兵庫県', 'ひょうごけん': '兵庫県',
-  'ﾅﾗｹﾝ': '奈良県', 'ナラケン': '奈良県', 'ならけん': '奈良県',
-  'ﾜｶﾔﾏｹﾝ': '和歌山県', 'ワカヤマケン': '和歌山県', 'わかやまけん': '和歌山県',
-  'ﾄｯﾄﾘｹﾝ': '鳥取県', 'トットリケン': '鳥取県', 'とっとりけん': '鳥取県',
-  'ｼﾏﾈｹﾝ': '島根県', 'シマネケン': '島根県', 'しまねけん': '島根県',
-  'ｵｶﾔﾏｹﾝ': '岡山県', 'オカヤマケン': '岡山県', 'おかやまけん': '岡山県',
-  'ﾋﾛｼﾏｹﾝ': '広島県', 'ヒロシマケン': '広島県', 'ひろしまけん': '広島県',
-  'ﾔﾏｸﾞﾁｹﾝ': '山口県', 'ヤマグチケン': '山口県', 'やまぐちけん': '山口県',
-  'ﾄｸｼﾏｹﾝ': '徳島県', 'トクシマケン': '徳島県', 'とくしまけん': '徳島県',
-  'ｶｶﾞﾜｹﾝ': '香川県', 'カガワケン': '香川県', 'かがわけん': '香川県',
-  'ｴﾋﾒｹﾝ': '愛媛県', 'エヒメケン': '愛媛県', 'えひめけん': '愛媛県',
-  'ｺｳﾁｹﾝ': '高知県', 'コウチケン': '高知県', 'こうちけん': '高知県',
-  'ﾌｸｵｶｹﾝ': '福岡県', 'フクオカケン': '福岡県', 'ふくおかけん': '福岡県',
-  'ｻｶﾞｹﾝ': '佐賀県', 'サガケン': '佐賀県', 'さがけん': '佐賀県',
-  'ﾅｶﾞｻｷｹﾝ': '長崎県', 'ナガサキケン': '長崎県', 'ながさきけん': '長崎県',
-  'ｸﾏﾓﾄｹﾝ': '熊本県', 'クマモトケン': '熊本県', 'くまもとけん': '熊本県',
-  'ｵｵｲﾀｹﾝ': '大分県', 'オオイタケン': '大分県', 'おおいたけん': '大分県',
-  'ﾐﾔｻﾞｷｹﾝ': '宮崎県', 'ミヤザキケン': '宮崎県', 'みやざきけん': '宮崎県',
-  'ｶｺﾞｼﾏｹﾝ': '鹿児島県', 'カゴシマケン': '鹿児島県', 'かごしまけん': '鹿児島県',
-  'ｵｷﾅﾜｹﾝ': '沖縄県', 'オキナワケン': '沖縄県', 'おきなわけん': '沖縄県',
-};
-
-const CITY_MAP = {
-  'ｼﾝｼﾞｭｸｸ': '新宿区', 'シンジュクク': '新宿区', 'しんじゅくく': '新宿区',
-  'ﾁﾖﾀﾞｸ': '千代田区', 'チヨダク': '千代田区', 'ちよだく': '千代田区',
-  'ﾁｭｳｵｳｸ': '中央区', 'チュウオウク': '中央区', 'ちゅうおうく': '中央区',
-  'ﾐﾅﾄｸ': '港区', 'ミナトク': '港区', 'みなとく': '港区',
-  'ﾌﾞﾝｷｮｳｸ': '文京区', 'ブンキョウク': '文京区', 'ぶんきょうく': '文京区',
-  'ﾀｲﾄｳｸ': '台東区', 'タイトウク': '台東区', 'たいとうく': '台東区',
-  'ｽﾐﾀﾞｸ': '墨田区', 'スミダク': '墨田区', 'すみだく': '墨田区',
-  'ｺｳﾄｳｸ': '江東区', 'コウトウク': '江東区', 'こうとうく': '江東区',
-  'ｼﾅｶﾞﾜｸ': '品川区', 'シナガワク': '品川区', 'しながわく': '品川区',
-  'ﾒｸﾞﾛｸ': '目黒区', 'メグロク': '目黒区', 'めぐろく': '目黒区',
-  'ｵｵﾀｸ': '大田区', 'オオタク': '大田区', 'おおたく': '大田区',
-  'ｾﾀｶﾞﾔｸ': '世田谷区', 'セタガヤク': '世田谷区', 'せたがやく': '世田谷区',
-  'ｼﾌﾞﾔｸ': '渋谷区', 'シブヤク': '渋谷区', 'しぶやく': '渋谷区',
-  'ﾅｶﾉｸ': '中野区', 'ナカノク': '中野区', 'なかのく': '中野区',
-  'ｽｷﾞﾅﾐｸ': '杉並区', 'スギナミク': '杉並区', 'すぎなみく': '杉並区',
-  'ﾄｼﾏｸ': '豊島区', 'トシマク': '豊島区', 'としまく': '豊島区',
-  'ｷﾀｸ': '北区', 'キタク': '北区', 'きたく': '北区',
-  'ｱﾗｶﾜｸ': '荒川区', 'アラカワク': '荒川区', 'あらかわく': '荒川区',
-  'ｲﾀﾊﾞｼｸ': '板橋区', 'イタバシク': '板橋区', 'いたばしく': '板橋区',
-  'ﾈﾘﾏｸ': '練馬区', 'ネリマク': '練馬区', 'ねりまく': '練馬区',
-  'ｱﾀﾞﾁｸ': '足立区', 'アダチク': '足立区', 'あだちく': '足立区',
-  'ｶﾂｼｶｸ': '葛飾区', 'カツシカク': '葛飾区', 'かつしかく': '葛飾区',
-  'ｴﾄﾞｶﾞﾜｸ': '江戸川区', 'エドガワク': '江戸川区', 'えどがわく': '江戸川区',
-  'ﾖｺﾊﾏｼ': '横浜市', 'ヨコハマシ': '横浜市', 'よこはまし': '横浜市',
-  'ｶﾜｻｷｼ': '川崎市', 'カワサキシ': '川崎市', 'かわさきし': '川崎市',
-  'ｻｲﾀﾏｼ': 'さいたま市', 'サイタマシ': 'さいたま市', 'さいたまし': 'さいたま市',
-  'ﾁﾊﾞｼ': '千葉市', 'チバシ': '千葉市', 'ちばし': '千葉市',
-  'ｵｵｻｶｼ': '大阪市', 'オオサカシ': '大阪市', 'おおさかし': '大阪市',
-  'ｷｮｳﾄｼ': '京都市', 'キョウトシ': '京都市', 'きょうとし': '京都市',
-  'ｺｳﾍﾞｼ': '神戸市', 'コウベシ': '神戸市', 'こうべし': '神戸市',
-  'ﾅｺﾞﾔｼ': '名古屋市', 'ナゴヤシ': '名古屋市', 'なごやし': '名古屋市',
-  'ﾌｸｵｶｼ': '福岡市', 'フクオカシ': '福岡市', 'ふくおかし': '福岡市',
-  'ｻｯﾎﾟﾛｼ': '札幌市', 'サッポロシ': '札幌市', 'さっぽろし': '札幌市',
-};
-
-// 高速化のためのRegex事前コンパイル
-const COMBINED_MAP = { ...PREFECTURE_MAP, ...CITY_MAP };
-const MAP_REGEX = new RegExp(Object.keys(COMBINED_MAP).join('|'), 'g');
-const HANKAKU_REGEX = /[ｱ-ﾝﾞﾟｰ･]/; // 半角カタカナが含まれているかどうかのチェック用
-
-// === ユーティリティ関数 ===
+// === ユーティリティ関数（最小限） ===
 const parseCSV = (text) => {
   const lines = text.split('\n').filter(line => line.trim());
   if (lines.length === 0) return { headers: [], rows: [] };
@@ -139,43 +47,7 @@ const generateCSV = (headers, rows) => {
   return [escapeLine(headers), ...rows.map(row => escapeLine(row))].join('\n');
 };
 
-const hankakuToZenkakuKatakana = (str) => {
-  // 高速化: 半角カタカナを含まない場合は何もしない
-  if (!HANKAKU_REGEX.test(str)) return str;
-
-  const hankaku = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯﾞﾟｰ･';
-  const zenkaku = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンァィゥェォャュョッ゛゜ー・';
-  let result = '';
-  for (let i = 0; i < str.length; i++) {
-    const char = str[i];
-    const index = hankaku.indexOf(char);
-    if (index !== -1) {
-      const nextChar = str[i + 1];
-      if (nextChar === 'ﾞ' || nextChar === 'ﾟ') {
-        const baseChar = zenkaku[index];
-        if (nextChar === 'ﾞ') {
-          const dakuten = 'ガギグゲゴザジズゼゾダヂヅデドバビブベボ';
-          const dakutenBase = 'カキクケコサシスセソタチツテトハヒフヘホ';
-          const dakutenIndex = dakutenBase.indexOf(baseChar);
-          result += dakutenIndex !== -1 ? dakuten[dakutenIndex] : baseChar + '゛';
-        } else {
-          const handakuten = 'パピプペポ';
-          const handakutenBase = 'ハヒフヘホ';
-          const handakutenIndex = handakutenBase.indexOf(baseChar);
-          result += handakutenIndex !== -1 ? handakuten[handakutenIndex] : baseChar + '゜';
-        }
-        i++;
-      } else {
-        result += zenkaku[index];
-      }
-    } else {
-      result += char;
-    }
-  }
-  return result;
-};
-
-// === Toast コンポーネント ===
+// === Toast コンポーネント (Tailwind Utilityのみ使用) ===
 const Toast = ({ message, onUndo, onClose, duration = 4000 }) => {
   useEffect(() => {
     const timer = setTimeout(onClose, duration);
@@ -183,18 +55,18 @@ const Toast = ({ message, onUndo, onClose, duration = 4000 }) => {
   }, [onClose, duration]);
 
   return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-4 z-50 animate-in fade-in slide-in-from-bottom-4">
+    <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-slate-800 text-white px-6 py-4 rounded-xl shadow-2xl flex items-center gap-4 z-[100] transition-all duration-300 ease-out animate-bounce-in">
       <span className="text-sm font-medium">{message}</span>
       {onUndo && (
         <button
           onClick={onUndo}
-          className="text-blue-300 hover:text-blue-100 text-sm font-bold bg-slate-700/50 hover:bg-slate-700 px-3 py-1 rounded transition flex items-center gap-1"
+          className="text-blue-300 hover:text-blue-100 text-sm font-bold bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded transition flex items-center gap-1"
         >
           <Undo2 className="w-4 h-4" /> 元に戻す
         </button>
       )}
-      <button onClick={onClose} className="text-slate-400 hover:text-white">
-        <X className="w-4 h-4" />
+      <button onClick={onClose} className="text-slate-400 hover:text-white p-1 rounded hover:bg-white/10">
+        <X className="w-5 h-5" />
       </button>
     </div>
   );
@@ -279,7 +151,6 @@ const CSVFormatter = () => {
   const [file, setFile] = useState(null);
   const [headers, setHeaders] = useState([]);
   const [rows, setRows] = useState([]);
-  // 初期データの保持用
   const [initialHeaders, setInitialHeaders] = useState([]);
   const [initialRows, setInitialRows] = useState([]);
 
@@ -297,7 +168,7 @@ const CSVFormatter = () => {
 
   // ステータス・Toast管理
   const [isProcessing, setIsProcessing] = useState(false);
-  const [toast, setToast] = useState(null); // { message, undoAction }
+  const [toast, setToast] = useState(null);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -326,7 +197,7 @@ const CSVFormatter = () => {
     setRows(lastState.rows);
     setColumnSettings(lastState.columnSettings);
     setHistory(prev => prev.slice(0, -1));
-    setToast(null); // UndoしたらToastは消す
+    setToast(null);
   };
 
   const handleResetToInitial = () => {
@@ -374,7 +245,6 @@ const CSVFormatter = () => {
 
         setFile(uploadedFile);
 
-        // 初期データを保存
         setInitialHeaders(parsedHeaders);
         setInitialRows(parsedRows);
 
@@ -413,53 +283,34 @@ const CSVFormatter = () => {
 
   const handleDataCleaning = () => {
     setIsProcessing(true);
+    saveToHistory('データクレンジング');
 
-    setTimeout(() => {
-      try {
-        saveToHistory('データクレンジング');
-        const cleanedRows = rows.map(row =>
-          row.map((cell, originalColIndex) => {
-            const setting = columnSettings.find(c => c.index === originalColIndex);
-            if (!setting) return cell;
-            if (!cell) return cell;
-            let result = String(cell);
+    const worker = new Worker('worker.js'); // public/worker.jsを参照
 
-            result = hankakuToZenkakuKatakana(result);
-            result = result.replace(/　/g, ' ');
+    worker.postMessage({
+      rows: rows,
+      columnSettings: columnSettings
+    });
 
-            if (setting.type === 'number') {
-              const numStr = result.replace(/[^\d.-]/g, '');
-              if (numStr && !isNaN(numStr)) result = Number(numStr).toLocaleString();
-              else result = '';
-            } else if (setting.type === 'postal') {
-              const postalNums = result.replace(/[^\d]/g, '');
-              if (postalNums.length === 7) result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
-              else if (postalNums.length === 6) result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
-              else result = postalNums;
-            } else {
-              result = result.replace(/#/g, '');
-              if (setting.type === 'phone') {
-                const nums = result.replace(/[^\d]/g, '');
-                if (nums.length === 11) result = `${nums.slice(0, 3)}-${nums.slice(3, 7)}-${nums.slice(7)}`;
-                else if (nums.length === 10) result = `${nums.slice(0, 3)}-${nums.slice(3, 6)}-${nums.slice(6)}`;
-              } else {
-                // 高速化: Regexで一括置換
-                result = result.replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
-                result = result.replace(MAP_REGEX, matched => COMBINED_MAP[matched]);
-              }
-            }
-            return result.replace(/[\x00-\x1F\x7F]/g, "");
-          })
-        );
+    worker.onmessage = (e) => {
+      const { success, cleanedRows, error } = e.data;
+      if (success) {
         setRows(cleanedRows);
         setIsCleaned(true);
-      } catch (error) {
-        console.error("Cleaning failed:", error);
-        alert("エラーが発生しました: " + error.message);
-      } finally {
-        setIsProcessing(false);
+      } else {
+        console.error("Worker Cleaning failed:", error);
+        alert("エラーが発生しました: " + error);
       }
-    }, 50);
+      setIsProcessing(false);
+      worker.terminate();
+    };
+
+    worker.onerror = (error) => {
+      console.error("Worker error:", error);
+      setIsProcessing(false);
+      alert("処理中にエラーが発生しました。");
+      worker.terminate();
+    };
   };
 
   const updateColumnType = (index, type) => {
@@ -471,7 +322,7 @@ const CSVFormatter = () => {
     saveToHistory('列削除');
     setColumnSettings(prev => prev.map(c => c.index === index ? { ...c, visible: false } : c));
     setActiveMenuIndex(null);
-    // Toastを表示し、Undoアクションを渡す
+    // Toastを確実に表示
     setToast({
       message: '列を削除しました',
       undoAction: handleUndo
@@ -585,6 +436,7 @@ const CSVFormatter = () => {
           <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
           <div className="text-xl font-bold text-slate-700">処理中...</div>
           <p className="text-slate-500">少々お待ちください</p>
+          <p className="text-xs text-slate-400 mt-2">（大量データの場合は時間がかかることがあります）</p>
         </div>
       )}
 
@@ -805,7 +657,7 @@ const CSVFormatter = () => {
   );
 };
 
-// 検索フィルターコンポーネント
+// 検索フィルターコンポーネント (変更なし)
 const SearchFilter = ({ headers, columnSettings, filterConfig, setFilterConfig, totalRows, filteredCount }) => {
   return (
     <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
