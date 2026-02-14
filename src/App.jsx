@@ -1,8 +1,10 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Upload, Download, AlertCircle, CheckCircle2, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2 } from 'lucide-react';
+import { Upload, Download, AlertCircle, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2, GripVertical, GripHorizontal, Plus, Merge } from 'lucide-react';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // === 定数・マッピング ===
-
 const PREFECTURE_MAP = {
   'ﾎｯｶｲﾄﾞｳ': '北海道', 'ホッカイドウ': '北海道', 'ほっかいどう': '北海道',
   'ｱｵﾓﾘｹﾝ': '青森県', 'アオモリケン': '青森県', 'あおもりけん': '青森県',
@@ -90,7 +92,6 @@ const CITY_MAP = {
 };
 
 // === ユーティリティ関数 ===
-
 const parseCSV = (text) => {
   const lines = text.split('\n').filter(line => line.trim());
   if (lines.length === 0) return { headers: [], rows: [] };
@@ -166,19 +167,93 @@ const hankakuToZenkakuKatakana = (str) => {
   return result;
 };
 
-// === メインコンポーネント ===
+// === DND対応ヘッダーコンポーネント ===
+const SortableHeader = ({ col, activeMenuIndex, setActiveMenuIndex, menuRef, updateColumnType, hideColumn }) => {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: col.index });
 
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 50 : 'auto',
+  };
+
+  return (
+    <th
+      ref={setNodeRef}
+      style={style}
+      className={`border-b border-r border-slate-200 relative group bg-slate-100 min-w-[120px] max-w-[300px] hover:bg-slate-200 transaction select-none whitespace-nowrap align-top`}
+      {...attributes}
+      {...listeners}
+    >
+      <div className="flex flex-col h-full">
+        {/* ドラッグハンドル兼コンテンツエリア */}
+        <div className="p-3 pr-8 cursor-grab active:cursor-grabbing w-full h-full flex flex-col justify-start items-start gap-1">
+          <div className="font-bold text-slate-800 text-sm truncate w-full" title={col.name}>{col.name}</div>
+          <div className="text-[10px] text-slate-500 font-mono uppercase bg-slate-200/50 px-1 rounded flex items-center gap-1">
+            {col.type} <ChevronDown className="w-3 h-3 ml-1" />
+          </div>
+        </div>
+
+        {/* 削除ボタン (常時表示またはホバー) */}
+        <button
+          className="absolute top-1 right-1 text-slate-400 hover:text-red-500 rounded p-1 hover:bg-red-50"
+          onClick={(e) => { e.stopPropagation(); hideColumn(col.index); }}
+          title="列を削除 (隠す)"
+          onPointerDown={(e) => e.stopPropagation()} // ドラッグ誤爆防止
+        >
+          <X className="w-3 h-3" />
+        </button>
+
+        {/* 設定メニューボタン (クリックでメニュー) */}
+        <div
+          className="absolute bottom-1 right-1 p-1 text-slate-400 hover:text-blue-500 cursor-pointer"
+          onClick={(e) => { e.stopPropagation(); setActiveMenuIndex(activeMenuIndex === col.index ? null : col.index); }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <GripHorizontal className="w-4 h-4" />
+        </div>
+      </div>
+
+      {/* Dropdown Menu */}
+      {activeMenuIndex === col.index && (
+        <div
+          ref={menuRef}
+          className="absolute top-full left-0 mt-1 w-40 bg-white rounded-lg shadow-xl border border-slate-200 z-50 text-slate-700 text-left font-normal"
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <div className="p-2 border-b border-slate-100">
+            <div className="text-xs font-semibold text-slate-400 mb-1 px-2">列のタイプ</div>
+            <button onClick={() => updateColumnType(col.index, 'text')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'text' ? 'text-blue-600 font-bold' : ''}`}>Text (標準)</button>
+            <button onClick={() => updateColumnType(col.index, 'number')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'number' ? 'text-blue-600 font-bold' : ''}`}>Number (金額)</button>
+            <button onClick={() => updateColumnType(col.index, 'postal')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'postal' ? 'text-blue-600 font-bold' : ''}`}>Postal (郵便番号)</button>
+            <button onClick={() => updateColumnType(col.index, 'phone')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'phone' ? 'text-blue-600 font-bold' : ''}`}>Phone (電話)</button>
+          </div>
+          <div className="p-2">
+            <button onClick={() => hideColumn(col.index)} className="w-full text-left px-2 py-1.5 rounded text-xs text-red-600 hover:bg-red-50 flex items-center gap-2">
+              <Trash2 className="w-3 h-3" /> 列を削除
+            </button>
+          </div>
+        </div>
+      )}
+    </th>
+  );
+};
+
+// === メインコンポーネント ===
 const CSVFormatter = () => {
   const [file, setFile] = useState(null);
   const [headers, setHeaders] = useState([]);
   const [rows, setRows] = useState([]);
-  const [columnSettings, setColumnSettings] = useState([]); // { index, name, visible, type }
-  // type: 'text', 'number', 'postal', 'phone'
+  const [columnSettings, setColumnSettings] = useState([]);
   const [history, setHistory] = useState([]);
   const [isCleaned, setIsCleaned] = useState(false);
-  const [filterConfig, setFilterConfig] = useState({ column: '', text: '' });
-  const [errors, setErrors] = useState([]);
+  const [filterConfig, setFilterConfig] = useState({ columnIndex: '', text: '' }); // column -> columnIndex
   const [downloadStatus, setDownloadStatus] = useState('');
+
+  // ツールバー用
+  const [splitConfig, setSplitConfig] = useState({ column: '', delimiter: ' ' });
+  const [mergeConfig, setMergeConfig] = useState({ columns: [], delimiter: ' ' });
 
   // ヘッダーメニュー用
   const [activeMenuIndex, setActiveMenuIndex] = useState(null);
@@ -187,6 +262,9 @@ const CSVFormatter = () => {
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (menuRef.current && !menuRef.current.contains(event.target)) {
+        // メニュー内クリックでない場合は閉じる
+        // ただし、トリガーボタンをクリックした直後(setActiveで開いた直後)は除外したいが
+        // ここではシンプルに閉じる処理。再クリックで開閉制御しているのでOK。
         setActiveMenuIndex(null);
       }
     };
@@ -224,12 +302,11 @@ const CSVFormatter = () => {
       const text = event.target.result;
       let { headers: parsedHeaders, rows: parsedRows } = parseCSV(text);
 
-      // 自動削除: 全行で空の末尾列を削除
+      // 自動削除
       while (parsedHeaders.length > 0) {
         const lastIndex = parsedHeaders.length - 1;
         const isHeaderEmpty = !parsedHeaders[lastIndex] || parsedHeaders[lastIndex].trim() === '';
         const isRowsEmpty = parsedRows.every(row => !row[lastIndex] || row[lastIndex].trim() === '');
-
         if (isHeaderEmpty && isRowsEmpty) {
           parsedHeaders.pop();
           parsedRows = parsedRows.map(row => row.slice(0, -1));
@@ -238,144 +315,177 @@ const CSVFormatter = () => {
         }
       }
 
-      // 大量データの警告
-      if (parsedRows.length > 30000) {
-        if (!window.confirm(`${parsedRows.length.toLocaleString()}行のデータです。続行しますか？`)) return;
-      }
-
       setFile(uploadedFile);
       setHeaders(parsedHeaders);
       setRows(parsedRows);
-
-      // 初期設定: 全列visible, typeはデフォルトでtext
+      // indexプロパティは不変の「元データの列番号」として使う
+      // idプロパティはdnd-kit用の一意なID (ここでは元indexを使う)
       setColumnSettings(parsedHeaders.map((h, i) => ({
+        id: i, // dnd-kit sorting id
         index: i,
         name: h,
         visible: true,
-        type: 'text' // default
+        type: 'text'
       })));
-
       setHistory([]);
-      setErrors([]);
       setIsCleaned(false);
     };
     reader.readAsText(uploadedFile);
   }, []);
 
+  // Drag & Drop Sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), // 8px移動でドラッグ開始
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event;
+    if (active.id !== over.id) {
+      setColumnSettings((items) => {
+        const oldIndex = items.findIndex((item) => item.id === active.id);
+        const newIndex = items.findIndex((item) => item.id === over.id);
+        return arrayMove(items, oldIndex, newIndex);
+      });
+    }
+  };
+
   // データクレンジング
   const handleDataCleaning = () => {
     saveToHistory('データクレンジング');
-
-    // 設定されたtypeに基づいてクレンジング
     const cleanedRows = rows.map(row =>
       row.map((cell, originalColIndex) => {
-        // 現在の列設定を取得 (移動されている可能性があるため)
         const setting = columnSettings.find(c => c.index === originalColIndex);
         if (!setting) return cell;
-
         if (!cell) return cell;
         let result = String(cell);
 
-        // 共通処理
-        // 1. 半角カタカナ→全角
         result = hankakuToZenkakuKatakana(result);
-        // 2. 全角スペース→半角
         result = result.replace(/　/g, ' ');
 
-        // === タイプ別処理 ===
         if (setting.type === 'number') {
-          // 数値・金額: アルファベットと記号(.,-以外)を削除
           const numStr = result.replace(/[^\d.-]/g, '');
-          if (numStr && !isNaN(numStr)) {
-            // カンマ区切りフォーマット
-            result = Number(numStr).toLocaleString();
-          } else {
-            result = ''; // 数値として認識できない場合は空にするか、元のままにするか(ここでは空)
-          }
+          if (numStr && !isNaN(numStr)) result = Number(numStr).toLocaleString();
+          else result = '';
         } else if (setting.type === 'postal') {
-          // 郵便番号: 数字とハイフン以外削除（アルファベット除去）
           const postalNums = result.replace(/[^\d]/g, '');
-          if (postalNums.length === 7) {
-            result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
-          } else if (postalNums.length === 6) { // まれなケース
-            result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
-          } else {
-            result = postalNums; // 桁数合わない場合は数字のみ残す
-          }
+          if (postalNums.length === 7) result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
+          else if (postalNums.length === 6) result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
+          else result = postalNums;
         } else {
-          // text, phoneなど
-          // #削除 (全タイプ共通またはテキストのみ)
           result = result.replace(/#/g, '');
-
-          // 既存のロジック: 英数字統一、カタカナ統一、都道府県統一など
           if (setting.type === 'phone') {
             const nums = result.replace(/[^\d]/g, '');
-            if (nums.length === 11) {
-              result = `${nums.slice(0, 3)}-${nums.slice(3, 7)}-${nums.slice(7)}`;
-            } else if (nums.length === 10) {
-              result = `${nums.slice(0, 3)}-${nums.slice(3, 6)}-${nums.slice(6)}`;
-            }
+            if (nums.length === 11) result = `${nums.slice(0, 3)}-${nums.slice(3, 7)}-${nums.slice(7)}`;
+            else if (nums.length === 10) result = `${nums.slice(0, 3)}-${nums.slice(3, 6)}-${nums.slice(6)}`;
           } else {
-            // 通常テキスト
-            // 全角英数字→半角
             result = result.replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
-            // 都道府県・市区町村正規化
             Object.entries(PREFECTURE_MAP).forEach(([k, v]) => { if (result.includes(k)) result = result.replace(k, v); });
             Object.entries(CITY_MAP).forEach(([k, v]) => { if (result.includes(k)) result = result.replace(k, v); });
           }
         }
-
-        // ゴミ掃除（全タイプ、制御文字など）
-        result = result.replace(/[\x00-\x1F\x7F]/g, "");
-
-        return result;
+        return result.replace(/[\x00-\x1F\x7F]/g, "");
       })
     );
-
     setRows(cleanedRows);
     setIsCleaned(true);
   };
 
-  // 列操作
   const updateColumnType = (index, type) => {
-    setColumnSettings(prev => prev.map((col, i) => i === index ? { ...col, type } : col));
+    setColumnSettings(prev => prev.map(c => c.index === index ? { ...c, type } : c));
     setActiveMenuIndex(null);
   };
 
   const hideColumn = (index) => {
-    setColumnSettings(prev => prev.map((col, i) => i === index ? { ...col, visible: false } : col));
+    setColumnSettings(prev => prev.map(c => c.index === index ? { ...c, visible: false } : c));
     setActiveMenuIndex(null);
   };
 
-  const moveColumn = (currentIndex, direction) => {
-    const newSettings = [...columnSettings];
-    // 表示されている列の中でのインデックス移動が必要
-    // ここでは簡易的に配列内の移動を行う
-    if (direction === 'left' && currentIndex > 0) {
-      [newSettings[currentIndex], newSettings[currentIndex - 1]] = [newSettings[currentIndex - 1], newSettings[currentIndex]];
-    } else if (direction === 'right' && currentIndex < newSettings.length - 1) {
-      [newSettings[currentIndex], newSettings[currentIndex + 1]] = [newSettings[currentIndex + 1], newSettings[currentIndex]];
-    }
+  // 列分割
+  const handleSplitColumn = () => {
+    if (!splitConfig.column) return;
+    saveToHistory('列分割');
+
+    // 現在のヘッダー名から元indexを探す
+    const targetSetting = columnSettings.find(c => c.name === splitConfig.column);
+    if (!targetSetting) return;
+    const colIndex = targetSetting.index;
+
+    const newRows = rows.map(row => {
+      const cellValue = row[colIndex] || '';
+      const parts = cellValue.split(splitConfig.delimiter);
+      const newRow = [...row];
+      newRow[colIndex] = parts[0] || '';
+      return [...newRow, parts.slice(1).join(splitConfig.delimiter) || ''];
+    });
+
+    const newColName = `${splitConfig.column}_2`;
+    const newHeaders = [...headers, newColName];
+
+    // 新しい列設定を追加
+    const newSettings = [
+      ...columnSettings,
+      { id: headers.length, index: headers.length, name: newColName, visible: true, type: 'text' }
+    ];
+
+    setHeaders(newHeaders);
+    setRows(newRows);
     setColumnSettings(newSettings);
+    setSplitConfig({ column: '', delimiter: ' ' });
   };
+
+  // 列結合
+  const handleMergeColumns = () => {
+    if (mergeConfig.columns.length < 2) return;
+    saveToHistory('列結合');
+
+    const targetSettings = columnSettings.filter(c => mergeConfig.columns.includes(c.name));
+    const targetIndices = targetSettings.map(c => c.index);
+    // 表示順に結合したいので、current columnSettingsの順序を見る
+    const sortedTargetIndices = columnSettings
+      .filter(c => mergeConfig.columns.includes(c.name))
+      .map(c => c.index);
+
+    const newColumnName = mergeConfig.columns.join('_');
+
+    const newRows = rows.map(row => {
+      const mergedValue = sortedTargetIndices
+        .map(idx => row[idx] || '')
+        .join(mergeConfig.delimiter);
+
+      // 元の列データは削除せず、新しい列を追加して、元の列を非表示にするというアプローチもアリだが
+      // ここでは元の列はそのまま、新しい列を追加するだけにします（非破壊）
+      return [...row, mergedValue];
+    });
+
+    const newHeaders = [...headers, newColumnName];
+    const newSettings = [
+      ...columnSettings,
+      { id: headers.length, index: headers.length, name: newColumnName, visible: true, type: 'text' }
+    ];
+
+    // 結合元の列を非表示にするオプションがあれば良いが、基本はそのまま
+    setHeaders(newHeaders);
+    setRows(newRows);
+    setColumnSettings(newSettings);
+    setMergeConfig({ columns: [], delimiter: ' ' });
+  };
+
 
   // フィルタリング
   const filteredRows = useMemo(() => {
-    if (!filterConfig.column || !filterConfig.text) return rows;
-    const colIndex = headers.indexOf(filterConfig.column); // 元のヘッダーインデックス
-    if (colIndex === -1) return rows;
-    return rows.filter(row => String(row[colIndex] || '').includes(filterConfig.text));
-  }, [rows, headers, filterConfig]);
+    if (filterConfig.columnIndex === '' || !filterConfig.text) return rows;
+    const idx = parseInt(filterConfig.columnIndex);
+    return rows.filter(row => String(row[idx] || '').includes(filterConfig.text));
+  }, [rows, filterConfig]);
 
   // ダウンロード
   const handleDownload = () => {
     try {
       setDownloadStatus('処理中...');
       const visibleCols = columnSettings.filter(c => c.visible);
-      // columnSettingsの順番に従ってデータを作成
       const newHeaders = visibleCols.map(c => c.name);
       const newRows = filteredRows.map(row => visibleCols.map(col => row[col.index]));
-
       const csv = generateCSV(newHeaders, newRows);
       const blob = new Blob([new Uint8Array([0xEF, 0xBB, 0xBF]), csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -393,179 +503,248 @@ const CSVFormatter = () => {
     }
   };
 
-  // 表示用
   const visibleColumns = columnSettings.filter(c => c.visible);
-  const previewRows = filteredRows.slice(0, 50);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-gray-100 p-8 font-sans text-slate-800">
-      <div className="max-w-7xl mx-auto space-y-8">
-
-        {/* ヘッダー */}
-        <div className="flex justify-between items-end">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900 tracking-tight mb-1">CSV Formatter Pro</h1>
-            <p className="text-slate-500">インテリジェントなデータ整形・加工ツール</p>
+    <div className="h-screen w-full bg-white flex flex-col font-sans text-slate-800 overflow-hidden">
+      {/* ヘッダーエリア (固定) */}
+      <div className="bg-slate-50 border-b border-slate-200 p-4 shrink-0 shadow-sm z-20">
+        <div className="flex justify-between items-center mb-4">
+          <div className="flex items-center gap-4">
+            <h1 className="text-xl font-bold text-slate-800">CSV Formatter Pro</h1>
+            {file && (
+              <div className="flex items-center gap-3 px-3 py-1 bg-white border border-slate-200 rounded-full text-xs text-slate-500">
+                <span className="font-semibold text-slate-700">{file.name}</span>
+                <span>{rows.length.toLocaleString()} 行</span>
+              </div>
+            )}
           </div>
           {file && (
-            <div className="text-right">
-              <p className="font-semibold text-slate-700">{file.name}</p>
-              <p className="text-sm text-slate-400">{rows.length.toLocaleString()} rows</p>
+            <div className="flex items-center gap-2">
+              {history.length > 0 && (
+                <button onClick={handleUndo} className="px-3 py-1.5 bg-white border border-slate-300 rounded hover:bg-slate-50 text-xs font-medium text-slate-600 flex items-center gap-1">
+                  <RotateCcw className="w-3 h-3" /> 元に戻す
+                </button>
+              )}
+              <button onClick={() => window.location.reload()} className="px-3 py-1.5 bg-red-50 border border-red-200 rounded hover:bg-red-100 text-xs font-medium text-red-600 flex items-center gap-1">
+                <Trash2 className="w-3 h-3" /> リセット
+              </button>
             </div>
           )}
         </div>
 
-        {!file ? (
-          <div className="bg-white rounded-2xl border-2 border-dashed border-slate-300 p-16 text-center hover:border-blue-400 transition-colors group">
-            <Upload className="w-16 h-16 mx-auto mb-6 text-slate-300 group-hover:text-blue-500 transition-colors" />
-            <h2 className="text-2xl font-bold text-slate-700 mb-4">CSVファイルをここにドロップ</h2>
-            <label className="inline-block">
-              <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
-              <div className="px-8 py-3 bg-blue-600 text-white rounded-lg font-semibold cursor-pointer hover:bg-blue-700 transition shadow-lg shadow-blue-200">
-                またはファイルを選択
-              </div>
-            </label>
-            <p className="mt-4 text-slate-400 text-sm">推奨: 3万行以下のCSVファイル</p>
-          </div>
-        ) : (
-          <div className="space-y-6">
+        {/* ツールバー */}
+        {file && (
+          <div className="flex flex-wrap items-center gap-4">
+            {/* クレンジング */}
+            <button
+              onClick={handleDataCleaning}
+              className="px-6 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded font-bold shadow hover:shadow-md transition text-sm flex items-center gap-2"
+            >
+              <Sparkles className="w-4 h-4" /> クレンジング実行
+              {isCleaned && <CheckCircle2 className="w-4 h-4" />}
+            </button>
 
-            {/* メインアクションエリア */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="h-8 w-px bg-slate-200 mx-2"></div>
 
-              {/* 1. クレンジング */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 md:col-span-2">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-lg font-bold flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-purple-500" />
-                    データクレンジング
-                  </h3>
-                  {isCleaned && <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-full font-bold">完了</span>}
-                </div>
-                <div className="text-sm text-slate-500 mb-6 bg-slate-50 p-4 rounded-lg">
-                  <p>列の「タイプ」に合わせて最適な整形を行います。</p>
-                  <ul className="list-disc list-inside mt-2 space-y-1 ml-2">
-                    <li><span className="font-semibold text-slate-700">数値・金額</span>: カンマ区切り、円マークなどの文字削除</li>
-                    <li><span className="font-semibold text-slate-700">郵便番号</span>: "abc"等の文字削除、ハイフン付与</li>
-                    <li><span className="font-semibold text-slate-700">テキスト</span>: 半角カナ→全角、記号(#)削除など</li>
-                  </ul>
-                </div>
-                <button
-                  onClick={handleDataCleaning}
-                  className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-lg font-bold shadow-md hover:shadow-lg transition transform hover:-translate-y-0.5 active:translate-y-0"
+            {/* 列編集ツール */}
+            <div className="flex items-center gap-2 bg-slate-100 p-1.5 rounded-lg border border-slate-200">
+              {/* 分割 */}
+              <div className="flex items-center gap-1 px-2">
+                <select
+                  className="text-xs p-1.5 rounded border border-slate-300 w-28"
+                  value={splitConfig.column}
+                  onChange={e => setSplitConfig(prev => ({ ...prev, column: e.target.value }))}
                 >
-                  クレンジング実行
+                  <option value="">分割する列...</option>
+                  {columnSettings.filter(c => c.visible).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+                <input
+                  type="text"
+                  placeholder="区切り文字"
+                  className="w-16 text-xs p-1.5 rounded border border-slate-300"
+                  value={splitConfig.delimiter}
+                  onChange={e => setSplitConfig(prev => ({ ...prev, delimiter: e.target.value }))}
+                />
+                <button onClick={handleSplitColumn} disabled={!splitConfig.column} className="p-1.5 bg-white border border-slate-300 rounded hover:bg-blue-50 text-blue-600 disabled:opacity-50">
+                  <Plus className="w-4 h-4" />
                 </button>
-                <div className="mt-4 flex gap-2 justify-end">
-                  {history.length > 0 && (
-                    <button onClick={handleUndo} className="text-sm text-slate-400 hover:text-slate-600 flex items-center gap-1">
-                      <RotateCcw className="w-3 h-3" /> 元に戻す
-                    </button>
-                  )}
-                  <button onClick={() => window.location.reload()} className="text-sm text-red-400 hover:text-red-600 flex items-center gap-1 ml-4">
-                    <Trash2 className="w-3 h-3" /> リセット
-                  </button>
-                </div>
               </div>
 
-              {/* 2. 出力 */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col justify-between">
-                <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
-                  <Download className="w-5 h-5 text-blue-500" />
-                  ダウンロード
-                </h3>
-                <p className="text-sm text-slate-500 mb-4">
-                  現在表示されている列 (`{visibleColumns.length}`列) と絞り込み結果 (`{filteredRows.length}`行) をCSVで出力します。
-                </p>
-                <button
-                  onClick={handleDownload}
-                  className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold shadow-md hover:bg-blue-700 transition"
+              <div className="h-6 w-px bg-slate-300 mx-1"></div>
+
+              {/* 結合 */}
+              <div className="flex items-center gap-1 px-2">
+                <div className="text-xs text-slate-500 mr-1">結合:</div>
+                <select
+                  className="text-xs p-1.5 rounded border border-slate-300 w-28"
+                  onChange={e => {
+                    if (!e.target.value) return;
+                    const val = e.target.value;
+                    setMergeConfig(prev => ({
+                      ...prev,
+                      columns: prev.columns.includes(val) ? prev.columns : [...prev.columns, val]
+                    }));
+                  }}
+                  value=""
                 >
-                  {downloadStatus || 'CSV ダウンロード'}
+                  <option value="">列を追加...</option>
+                  {columnSettings.filter(c => c.visible).map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                </select>
+                <div className="flex gap-1">
+                  {mergeConfig.columns.map(col => (
+                    <span key={col} className="text-[10px] bg-blue-100 text-blue-700 px-1 rounded border border-blue-200 flex items-center gap-0.5">
+                      {col} <X className="w-2 h-2 cursor-pointer" onClick={() => setMergeConfig(prev => ({ ...prev, columns: prev.columns.filter(c => c !== col) }))} />
+                    </span>
+                  ))}
+                </div>
+                <button onClick={handleMergeColumns} disabled={mergeConfig.columns.length < 2} className="p-1.5 bg-white border border-slate-300 rounded hover:bg-blue-50 text-blue-600 disabled:opacity-50">
+                  <Merge className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* プレビュー & 列操作 */}
-            <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden min-h-[500px] flex flex-col">
-              <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                <h3 className="font-bold text-slate-700">プレビュー & 列編集</h3>
-                <div className="flex gap-2">
-                  {/* 簡易フィルタ */}
-                  <div className="relative">
-                    <Filter className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="データを検索..."
-                      className="pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
-                      value={filterConfig.text}
-                      onChange={e => setFilterConfig({ column: headers[0], text: e.target.value })}
-                    />
-                  </div>
-                </div>
-              </div>
+            <div className="h-8 w-px bg-slate-200 mx-2"></div>
 
-              <div className="flex-1 overflow-auto relative">
-                <table className="w-full text-sm text-left border-collapse">
-                  <thead>
-                    <tr className="bg-slate-100 text-slate-600 sticky top-0 z-10 shadow-sm">
-                      {columnSettings.filter(c => c.visible).map((col, viewIndex) => (
-                        <th key={col.index} className="border-b border-r border-slate-200 min-w-[150px] p-0 relative group">
-                          <div
-                            className="p-3 pr-8 cursor-pointer hover:bg-slate-200 transition select-none"
-                            onClick={() => setActiveMenuIndex(activeMenuIndex === col.index ? null : col.index)}
-                          >
-                            <div className="font-bold text-slate-800">{col.name}</div>
-                            <div className="text-xs text-slate-500 mt-1 font-mono uppercase bg-slate-200/50 inline-block px-1 rounded">
-                              {col.type}
-                            </div>
-                            <ChevronDown className="w-4 h-4 absolute right-2 top-4 text-slate-400 opacity-0 group-hover:opacity-100 transition" />
-                          </div>
-
-                          {/* Dropdown Menu */}
-                          {activeMenuIndex === col.index && (
-                            <div ref={menuRef} className="absolute top-full left-0 mt-1 w-48 bg-white rounded-lg shadow-xl border border-slate-200 z-50 text-slate-700 animate-in fade-in zoom-in-95 duration-100">
-                              <div className="p-2 border-b border-slate-100">
-                                <div className="text-xs font-semibold text-slate-400 mb-1 px-2">列のタイプ</div>
-                                <button onClick={() => updateColumnType(col.index, 'text')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'text' ? 'text-blue-600 font-bold' : ''}`}>Text (標準)</button>
-                                <button onClick={() => updateColumnType(col.index, 'number')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'number' ? 'text-blue-600 font-bold' : ''}`}>Number (金額)</button>
-                                <button onClick={() => updateColumnType(col.index, 'postal')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'postal' ? 'text-blue-600 font-bold' : ''}`}>Postal (郵便番号)</button>
-                                <button onClick={() => updateColumnType(col.index, 'phone')} className={`w-full text-left px-2 py-1.5 rounded text-xs hover:bg-blue-50 ${col.type === 'phone' ? 'text-blue-600 font-bold' : ''}`}>Phone (電話)</button>
-                              </div>
-                              <div className="p-2 border-b border-slate-100">
-                                <div className="text-xs font-semibold text-slate-400 mb-1 px-2">列の移動</div>
-                                <div className="flex gap-1">
-                                  <button onClick={() => moveColumn(viewIndex, 'left')} className="flex-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 rounded border border-slate-200 text-center"><ArrowLeft className="w-3 h-3 mx-auto" /></button>
-                                  <button onClick={() => moveColumn(viewIndex, 'right')} className="flex-1 px-2 py-1 bg-slate-50 hover:bg-slate-100 rounded border border-slate-200 text-center"><ArrowRight className="w-3 h-3 mx-auto" /></button>
-                                </div>
-                              </div>
-                              <div className="p-2">
-                                <button onClick={() => hideColumn(col.index)} className="w-full text-left px-2 py-1.5 rounded text-xs text-red-600 hover:bg-red-50 flex items-center gap-2">
-                                  <EyeOff className="w-3 h-3" /> この列を隠す
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {previewRows.map((row, rowIndex) => (
-                      <tr key={rowIndex} className="border-b border-slate-100 hover:bg-blue-50/30 transition">
-                        {columnSettings.filter(c => c.visible).map((col) => (
-                          <td key={col.index} className="p-3 border-r border-slate-100 whitespace-nowrap overflow-hidden text-ellipsis max-w-xs">{row[col.index] || ''}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            {/* 検索 */}
+            <div className="flex items-center gap-2">
+              <SearchFilter
+                headers={headers}
+                columnSettings={columnSettings}
+                filterConfig={filterConfig}
+                setFilterConfig={setFilterConfig}
+              />
             </div>
 
+            <div className="flex-1"></div>
+
+            {/* ダウンロード */}
+            <button
+              onClick={handleDownload}
+              className="px-6 py-2 bg-green-600 text-white rounded font-bold shadow hover:bg-green-700 transition text-sm flex items-center gap-2"
+            >
+              <Download className="w-4 h-4" /> {downloadStatus || 'CSV ダウンロード'}
+            </button>
           </div>
         )}
       </div>
+
+      {/* ファイル未選択時 */}
+      {!file && (
+        <div className="flex-1 flex items-center justify-center bg-slate-50 p-8">
+          <div className="bg-white rounded-2xl border-2 border-dashed border-slate-300 p-16 text-center hover:border-blue-400 transition-colors shadow-sm max-w-2xl w-full">
+            <Upload className="w-20 h-20 mx-auto mb-6 text-slate-300" />
+            <h2 className="text-3xl font-bold text-slate-700 mb-4">CSVファイルをドロップ</h2>
+            <label className="inline-block">
+              <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+              <div className="px-10 py-4 bg-blue-600 text-white rounded-xl font-bold text-lg cursor-pointer hover:bg-blue-700 transition shadow-lg shadow-blue-200">
+                ファイルを選択
+              </div>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* テーブルエリア (スクロール対応) */}
+      {file && (
+        <div className="flex-1 overflow-auto bg-slate-100 p-4 w-full">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <table className="bg-white border-collapse w-full shadow-sm table-auto md:table-fixed">
+              <thead className="sticky top-0 z-10 shadow-sm">
+                <tr className="bg-slate-50">
+                  <SortableContext
+                    items={columnSettings.map(c => c.id)}
+                    strategy={horizontalListSortingStrategy}
+                  >
+                    {columnSettings.map((col) => {
+                      if (!col.visible) return null;
+                      return (
+                        <SortableHeader
+                          key={col.id}
+                          col={col}
+                          activeMenuIndex={activeMenuIndex}
+                          setActiveMenuIndex={setActiveMenuIndex}
+                          menuRef={menuRef}
+                          updateColumnType={updateColumnType}
+                          hideColumn={hideColumn}
+                        />
+                      );
+                    })}
+                  </SortableContext>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rows
+                  .filter((row, rowIndex) => {
+                    // フィルタリング処理の再適用（useMemo使うと重くなる可能性あるが、ここではシンプルに）
+                    if (!filterConfig.text) return true;
+                    const idx = parseInt(filterConfig.columnIndex);
+                    if (isNaN(idx)) return true;
+                    return String(row[idx] || '').includes(filterConfig.text);
+                  })
+                  .slice(0, 100) // 描画パフォーマンスのため100件制限（スクロールロードは未実装）
+                  .map((row, rowIndex) => (
+                    <tr key={rowIndex} className="hover:bg-blue-50/50">
+                      {columnSettings.map((col) => {
+                        if (!col.visible) return null;
+                        return (
+                          <td key={col.id} className="p-3 border-r border-slate-100 text-sm align-top break-words min-w-[150px] max-w-[400px]">
+                            {row[col.index] || ''}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+            {/* 件数が多い場合の表示 */}
+            {rows.length > 100 && (
+              <div className="p-4 text-center text-slate-500 text-sm bg-slate-50 border-t border-slate-200">
+                ... 他 {rows.length - 100} 行を表示していません（全データはダウンロード時に含まれます）...
+              </div>
+            )}
+          </DndContext>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// 検索フィルターコンポーネント (切り出し)
+const SearchFilter = ({ headers, columnSettings, filterConfig, setFilterConfig }) => {
+  return (
+    <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200">
+      <select
+        className="text-xs bg-transparent border-none focus:ring-0 text-slate-600 font-medium py-1 pl-2 pr-6 max-w-[120px]"
+        value={filterConfig.columnIndex}
+        onChange={e => setFilterConfig(prev => ({ ...prev, columnIndex: e.target.value }))}
+      >
+        <option value="">(検索対象を選択)</option>
+        {columnSettings.filter(c => c.visible).map(c => (
+          <option key={c.id} value={c.index}>{c.name}</option>
+        ))}
+      </select>
+      <div className="h-4 w-px bg-slate-300 mx-1"></div>
+      <div className="relative">
+        <Filter className="w-3 h-3 absolute left-2 top-2 text-slate-400" />
+        <input
+          type="text"
+          placeholder="検索..."
+          className="text-xs border-none bg-transparent focus:ring-0 pl-6 py-1 w-32"
+          value={filterConfig.text}
+          onChange={e => setFilterConfig(prev => ({ ...prev, text: e.target.value }))}
+          disabled={filterConfig.columnIndex === ''}
+        />
+      </div>
+      {filterConfig.text && (
+        <button onClick={() => setFilterConfig(prev => ({ ...prev, text: '' }))} className="p-1 hover:bg-slate-200 rounded-full">
+          <X className="w-3 h-3 text-slate-400" />
+        </button>
+      )}
     </div>
   );
 };
