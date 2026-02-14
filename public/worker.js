@@ -131,7 +131,7 @@ const detectColumnType = (rows, colIndex) => {
     let phoneCount = 0;
     let postalCount = 0;
     let nonEmptyCount = 0;
-    const checkLimit = 100; // 最初の100行で判定
+    const checkLimit = 200; // チェック行数を増やす
 
     for (let i = 0; i < Math.min(rows.length, checkLimit); i++) {
         const val = String(rows[i][colIndex] || '').trim();
@@ -141,28 +141,36 @@ const detectColumnType = (rows, colIndex) => {
         // 数値だけ抽出
         const digitOnly = val.replace(/[^\d]/g, '');
 
-        // 電話番号っぽい (10桁か11桁)
-        if (digitOnly.length >= 10 && digitOnly.length <= 11) {
+        // 電話番号っぽい (9桁〜11桁)
+        // 9桁: 03-1234-567 (市外局番抜け等)も許容してみる
+        if (digitOnly.length >= 9 && digitOnly.length <= 11) {
             phoneCount++;
         }
 
-        // 郵便番号っぽい (7桁)
-        if (digitOnly.length === 7) {
+        // 郵便番号っぽい (7桁) または ハイフンありで7桁
+        if (digitOnly.length === 7 || (val.includes('-') && digitOnly.length === 7)) {
             postalCount++;
         }
 
-        // 金額っぽい (数値のみ、またはカンマ含む)
-        if (/^[\d,¥￥]+$/.test(val)) {
-            numericCount++;
+        // 金額っぽい (数値のみ、またはカンマ含む。円マーク含む)
+        // アルファベットが含まれていても、数字の割合が高ければ金額の可能性あり（ゴミデータ混入）
+        if (/[\d]/.test(val)) {
+            // 簡易判定: 数字を含み、かつ「電話でも郵便でもない」場合
+            if (!val.match(/\d{2,4}-\d{2,4}-\d{4}/) && !val.match(/\d{3}-\d{4}/)) {
+                // 数字の連続性が高い、またはカンマ区切り
+                if (/^[\d,¥￥\.\s]+$/.test(val.replace(/[a-zA-Z]/g, ''))) {
+                    numericCount++;
+                }
+            }
         }
     }
 
     if (nonEmptyCount === 0) return 'text';
 
-    // 判定基準 (50%以上マッチしたらその型とみなす)
-    if (phoneCount / nonEmptyCount > 0.5) return 'phone';
-    if (postalCount / nonEmptyCount > 0.5) return 'postal';
-    if (numericCount / nonEmptyCount > 0.5) return 'number';
+    // 判定基準 (30%以上マッチしたらその型とみなす - 緩和)
+    if (phoneCount / nonEmptyCount > 0.3) return 'phone';
+    if (postalCount / nonEmptyCount > 0.3) return 'postal';
+    if (numericCount / nonEmptyCount > 0.3) return 'number';
 
     return 'text';
 };
@@ -198,46 +206,55 @@ self.onmessage = (e) => {
 
                 if (type === 'number') {
                     // アルファベット除去、カンマ除去して数値化、再フォーマット
-                    const numStr = result.replace(/[^\d.-]/g, ''); // 負の数や小数も考慮
+                    // "abc1000" -> "1000"
+                    const numStr = result.replace(/[^\d.-]/g, '');
                     if (numStr && !isNaN(numStr)) {
                         result = Number(numStr).toLocaleString();
                     }
-                    // 計算不能なら元の文字列(ただしアルファベットなどは消えるかも？) -> いったん数値抽出優先
                 } else if (type === 'postal') {
                     // 郵便番号: 数字以外除去、xxx-xxxx
-                    const postalNums = result.replace(/[^\d]/g, '');
+                    let postalNums = result.replace(/[^\d]/g, '');
+
+                    // 7桁
                     if (postalNums.length === 7) {
                         result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
                     }
-                    // 7桁以外はそのまま(数字のみ) or 元のまま
+                    // 6桁? "123456" -> "123-456"? いや、6桁は不完全だが、とりあえずハイフン入れる？
+                    // ユーザー指摘: "123456"
+                    else if (postalNums.length === 6) {
+                        // 無理やりハイフンを入れるとすれば 3-3 ?
+                        result = `${postalNums.slice(0, 3)}-${postalNums.slice(3)}`;
+                    }
+                    // 5桁以下 はそのまま
                     else if (postalNums.length > 0) {
                         result = postalNums;
                     }
                 } else if (type === 'phone') {
-                    // 電話番号: 数字以外除去、ハイフン付与
-                    // 090-1234-5678, 03-1234-5678 など
+                    // 電話番号
                     const nums = result.replace(/[^\d]/g, '');
+
                     if (nums.length === 11) {
                         // 090 1234 5678 -> 090-1234-5678
                         result = `${nums.slice(0, 3)}-${nums.slice(3, 7)}-${nums.slice(7)}`;
                     } else if (nums.length === 10) {
-                        // 03 xxxx xxxx -> 03-xxxx-xxxx (東京など)
-                        // 06 xxxx xxxx -> 06-xxxx-xxxx (大阪など)
-                        // ※市外局番の桁数は厳密には複雑だが、簡易的に2-4-4で切るのが一般的
-                        // ただし045(横浜)などは3-3-4。ここでは簡易ロジックとして、先頭が03/06なら2桁、それ以外は3桁で試行
                         if (nums.startsWith('03') || nums.startsWith('06')) {
                             result = `${nums.slice(0, 2)}-${nums.slice(2, 6)}-${nums.slice(6)}`;
                         } else {
                             result = `${nums.slice(0, 3)}-${nums.slice(3, 6)}-${nums.slice(6)}`;
                         }
+                    } else if (nums.length === 9) {
+                        // "90-1234-567" のようなケース (0落ち?) -> 090-1234-5678 に復元は危険だが、
+                        // とりあえずハイフンで整形するなら 2-3-4 ? あるいはそのまま?
+                        // ユーザーの例: "90-1234-567" allow intact?
+                        // 数字のみにして9桁なら、そのまま返すか、無理やりハイフン？
+                        // いったんそのまま返す（数字のみにはなっている）
+                        result = nums;
                     } else if (nums.length > 0) {
                         result = nums;
                     }
                 } else {
                     // 通常テキスト
-                    // 英数字の全角→半角統一
                     result = result.replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
-                    // 都道府県・市区町村統一
                     result = result.replace(MAP_REGEX, matched => COMBINED_MAP[matched]);
                 }
 
