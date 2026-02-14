@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Upload, Download, AlertCircle, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2, GripVertical, GripHorizontal, Plus, Merge, Search, Loader2, RefreshCcw } from 'lucide-react';
+import { Upload, Download, AlertCircle, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2, GripVertical, GripHorizontal, Plus, Merge, Search, Loader2, RefreshCcw, Undo2 } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-// === 定数・マッピング ===
+// === 定数・マッピング (最適化用) ===
 const PREFECTURE_MAP = {
   'ﾎｯｶｲﾄﾞｳ': '北海道', 'ホッカイドウ': '北海道', 'ほっかいどう': '北海道',
   'ｱｵﾓﾘｹﾝ': '青森県', 'アオモリケン': '青森県', 'あおもりけん': '青森県',
@@ -91,6 +91,11 @@ const CITY_MAP = {
   'ｻｯﾎﾟﾛｼ': '札幌市', 'サッポロシ': '札幌市', 'さっぽろし': '札幌市',
 };
 
+// 高速化のためのRegex事前コンパイル
+const COMBINED_MAP = { ...PREFECTURE_MAP, ...CITY_MAP };
+const MAP_REGEX = new RegExp(Object.keys(COMBINED_MAP).join('|'), 'g');
+const HANKAKU_REGEX = /[ｱ-ﾝﾞﾟｰ･]/; // 半角カタカナが含まれているかどうかのチェック用
+
 // === ユーティリティ関数 ===
 const parseCSV = (text) => {
   const lines = text.split('\n').filter(line => line.trim());
@@ -135,6 +140,9 @@ const generateCSV = (headers, rows) => {
 };
 
 const hankakuToZenkakuKatakana = (str) => {
+  // 高速化: 半角カタカナを含まない場合は何もしない
+  if (!HANKAKU_REGEX.test(str)) return str;
+
   const hankaku = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜｦﾝｧｨｩｪｫｬｭｮｯﾞﾟｰ･';
   const zenkaku = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンァィゥェォャュョッ゛゜ー・';
   let result = '';
@@ -166,6 +174,32 @@ const hankakuToZenkakuKatakana = (str) => {
   }
   return result;
 };
+
+// === Toast コンポーネント ===
+const Toast = ({ message, onUndo, onClose, duration = 4000 }) => {
+  useEffect(() => {
+    const timer = setTimeout(onClose, duration);
+    return () => clearTimeout(timer);
+  }, [onClose, duration]);
+
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-4 z-50 animate-in fade-in slide-in-from-bottom-4">
+      <span className="text-sm font-medium">{message}</span>
+      {onUndo && (
+        <button
+          onClick={onUndo}
+          className="text-blue-300 hover:text-blue-100 text-sm font-bold bg-slate-700/50 hover:bg-slate-700 px-3 py-1 rounded transition flex items-center gap-1"
+        >
+          <Undo2 className="w-4 h-4" /> 元に戻す
+        </button>
+      )}
+      <button onClick={onClose} className="text-slate-400 hover:text-white">
+        <X className="w-4 h-4" />
+      </button>
+    </div>
+  );
+};
+
 
 // === DND対応ヘッダーコンポーネント ===
 const SortableHeader = ({ col, activeMenuIndex, setActiveMenuIndex, menuRef, updateColumnType, hideColumn }) => {
@@ -261,8 +295,9 @@ const CSVFormatter = () => {
   const [activeMenuIndex, setActiveMenuIndex] = useState(null);
   const menuRef = useRef(null);
 
-  // ステータス管理
+  // ステータス・Toast管理
   const [isProcessing, setIsProcessing] = useState(false);
+  const [toast, setToast] = useState(null); // { message, undoAction }
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -291,6 +326,7 @@ const CSVFormatter = () => {
     setRows(lastState.rows);
     setColumnSettings(lastState.columnSettings);
     setHistory(prev => prev.slice(0, -1));
+    setToast(null); // UndoしたらToastは消す
   };
 
   const handleResetToInitial = () => {
@@ -376,9 +412,8 @@ const CSVFormatter = () => {
   };
 
   const handleDataCleaning = () => {
-    setIsProcessing(true); // ローディング開始
+    setIsProcessing(true);
 
-    // setTimeoutでメインスレッドを解放し、ローディング表示を描画させる
     setTimeout(() => {
       try {
         saveToHistory('データクレンジング');
@@ -408,9 +443,9 @@ const CSVFormatter = () => {
                 if (nums.length === 11) result = `${nums.slice(0, 3)}-${nums.slice(3, 7)}-${nums.slice(7)}`;
                 else if (nums.length === 10) result = `${nums.slice(0, 3)}-${nums.slice(3, 6)}-${nums.slice(6)}`;
               } else {
+                // 高速化: Regexで一括置換
                 result = result.replace(/[Ａ-Ｚａ-ｚ０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
-                Object.entries(PREFECTURE_MAP).forEach(([k, v]) => { if (result.includes(k)) result = result.replace(k, v); });
-                Object.entries(CITY_MAP).forEach(([k, v]) => { if (result.includes(k)) result = result.replace(k, v); });
+                result = result.replace(MAP_REGEX, matched => COMBINED_MAP[matched]);
               }
             }
             return result.replace(/[\x00-\x1F\x7F]/g, "");
@@ -422,7 +457,7 @@ const CSVFormatter = () => {
         console.error("Cleaning failed:", error);
         alert("エラーが発生しました: " + error.message);
       } finally {
-        setIsProcessing(false); // ローディング終了
+        setIsProcessing(false);
       }
     }, 50);
   };
@@ -433,8 +468,14 @@ const CSVFormatter = () => {
   };
 
   const hideColumn = (index) => {
+    saveToHistory('列削除');
     setColumnSettings(prev => prev.map(c => c.index === index ? { ...c, visible: false } : c));
     setActiveMenuIndex(null);
+    // Toastを表示し、Undoアクションを渡す
+    setToast({
+      message: '列を削除しました',
+      undoAction: handleUndo
+    });
   };
 
   const handleSplitColumn = () => {
@@ -545,6 +586,15 @@ const CSVFormatter = () => {
           <div className="text-xl font-bold text-slate-700">処理中...</div>
           <p className="text-slate-500">少々お待ちください</p>
         </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          onUndo={() => { toast.undoAction(); setToast(null); }}
+          onClose={() => setToast(null)}
+        />
       )}
 
       {/* ヘッダーエリア */}
