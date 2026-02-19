@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Upload, Download, AlertCircle, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2, GripVertical, GripHorizontal, Plus, Merge, Search, Loader2, RefreshCcw, Undo2, CheckCircle2, Users } from 'lucide-react';
+import { Upload, Download, AlertCircle, X, RotateCcw, Filter, Sparkles, ChevronDown, ArrowLeft, ArrowRight, EyeOff, Trash2, GripVertical, GripHorizontal, Plus, Merge, Search, Loader2, RefreshCcw, Undo2, CheckCircle2 } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -133,22 +133,18 @@ const App = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // カウンター用のステート
-  const [counter, setCounter] = useState(null);
-
-  // カウンター取得のEffect
+  // アクセス計測用（裏側で実行）
   useEffect(() => {
-    const fetchCounter = async () => {
+    const logAccess = async () => {
       try {
         const url = "https://script.google.com/macros/s/AKfycbznxYkj5ixnK_pHkGR8LUYhEYdvSYpaiF3x4LaZy964wlu068oak1X1uuIiyqCEtGWF/exec?page=CSV";
-        const response = await fetch(url);
-        const data = await response.text();
-        setCounter(data);
+        // 取得するだけで表示はしない
+        await fetch(url, { mode: 'no-cors' });
       } catch (error) {
-        console.error("Counter fetch error:", error);
+        // バックグラウンド処理のためエラーは無視
       }
     };
-    fetchCounter();
+    logAccess();
   }, []);
 
   const saveToHistory = (action) => {
@@ -256,15 +252,12 @@ const App = () => {
     setIsProcessing(true);
     saveToHistory('データクレンジング');
 
-    // 本来はWorkerを使うが、簡易化のためメインスレッドで処理（指示に基づき既存ロジックを尊重）
-    // 注意: worker.jsがない場合はエラーになるため、ここではタイムアウトシミュレーションに留めるか、
-    // インライン処理を行います。ここではUI動作を優先。
     setTimeout(() => {
       const cleanedRows = rows.map(row => row.map(cell => {
         if (typeof cell !== 'string') return cell;
         return cell.trim()
-          .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") // 制御文字削除
-          .replace(/\s+/g, ' '); // 重複スペース
+          .replace(/[\u0000-\u001F\u007F-\u009F]/g, "") 
+          .replace(/\s+/g, ' '); 
       }));
       setRows(cleanedRows);
       setIsCleaned(true);
@@ -410,14 +403,7 @@ const App = () => {
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold text-slate-800">CSV Formatter Pro</h1>
             
-            {/* 訪問者カウンター表示 */}
-            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-white border border-slate-200 rounded-lg text-slate-500 shadow-sm">
-              <Users className="w-3.5 h-3.5 text-slate-400" />
-              <span className="text-[11px] font-bold tracking-wider uppercase">Views:</span>
-              <span className="text-xs font-mono font-bold text-indigo-600">
-                {counter !== null ? Number(counter).toLocaleString() : '---'}
-              </span>
-            </div>
+            {/* カウンター表示は削除されました（バックグラウンド計測のみ継続） */}
 
             {file && (
               <div className="flex items-center gap-3 px-3 py-1 bg-white border border-slate-200 rounded-full text-xs text-slate-500">
